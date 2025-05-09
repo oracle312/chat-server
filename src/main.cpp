@@ -2,6 +2,7 @@
 #include <iostream>
 #include <set>
 #include <memory>
+#include <string>
 
 using boost::asio::ip::tcp;
 
@@ -22,13 +23,28 @@ private:
         socket_.async_read_some(boost::asio::buffer(data_, max_length),
             [this, self](boost::system::error_code ec, std::size_t length) {
                 if (!ec) {
-                    // 브로드캐스트
+                    std::string received(data_, length);
+
+                    if (!authenticated_) {
+                        // Expect AUTH|<display_name>
+                        const std::string prefix = "AUTH|";
+                        if (received.rfind(prefix, 0) == 0) {
+                            display_name_ = received.substr(prefix.size());
+                            authenticated_ = true;
+                            std::cout << "[Authenticated] " << display_name_ << std::endl;
+                        }
+                        do_read();
+                        return;
+                    }
+
+                    // Prepare broadcast message: MSG|<display_name>|<content>
+                    std::string outbound = "MSG|" + display_name_ + "|" + received;
+
                     for (auto& s : sessions_) {
-                        if (s != self) {
-                            s->socket_.async_write_some(
-                                boost::asio::buffer(data_, length),
-                                [](auto, auto) {}
-                            );
+                        if (s != self && s->authenticated_) {
+                            boost::asio::async_write(s->socket_,
+                                boost::asio::buffer(outbound),
+                                [](boost::system::error_code /*ec*/, std::size_t /*bytes*/) {});
                         }
                     }
                     do_read();
@@ -43,6 +59,8 @@ private:
     enum { max_length = 1024 };
     char data_[max_length];
     std::set<std::shared_ptr<Session>>& sessions_;
+    std::string display_name_;
+    bool authenticated_ = false;
 };
 
 int main() {
@@ -63,11 +81,12 @@ int main() {
             };
 
         do_accept();
-        std::cout << "Server running on port 12345...\n";
+        std::cout << "Server running on port 12345..." << std::endl;
         io_context.run();
     }
     catch (std::exception& e) {
-        std::cerr << "Exception: " << e.what() << "\n";
+        std::cerr << "Exception: " << e.what() << std::endl;
     }
     return 0;
 }
+
