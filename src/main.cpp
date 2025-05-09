@@ -20,13 +20,15 @@ public:
 private:
     void do_read() {
         auto self(shared_from_this());
-        socket_.async_read_some(boost::asio::buffer(data_, max_length),
+        boost::asio::async_read_until(socket_, buffer_, '\n',
             [this, self](boost::system::error_code ec, std::size_t length) {
                 if (!ec) {
-                    std::string received(data_, length);
+                    // 1) 한 줄(개행 포함) 읽기
+                    std::istream is(&buffer_);
+                    std::string received;
+                    std::getline(is, received);  // '\n' 제거된 메시지가 received에 담깁니다
 
                     if (!authenticated_) {
-                        // Expect AUTH|<display_name>
                         const std::string prefix = "AUTH|";
                         if (received.rfind(prefix, 0) == 0) {
                             display_name_ = received.substr(prefix.size());
@@ -37,14 +39,17 @@ private:
                         return;
                     }
 
-                    // Prepare broadcast message: MSG|<display_name>|<content>
-                    std::string outbound = "MSG|" + display_name_ + "|" + received;
+                    // 2) 형식 맞춰서 한 줄로 브로드캐스트
+                    std::string outbound = "MSG|" + display_name_ + "|" + received + "\n";
 
                     for (auto& s : sessions_) {
                         if (s != self && s->authenticated_) {
-                            boost::asio::async_write(s->socket_,
+                            // async_write 로 전체를 보장
+                            boost::asio::async_write(
+                                s->socket_,
                                 boost::asio::buffer(outbound),
-                                [](boost::system::error_code /*ec*/, std::size_t /*bytes*/) {});
+                                [](auto, auto) {}
+                            );
                         }
                     }
                     do_read();
