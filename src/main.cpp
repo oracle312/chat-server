@@ -1,3 +1,5 @@
+//
+
 #include <boost/asio.hpp>
 #include <pqxx/pqxx>
 #include <iostream>
@@ -88,7 +90,8 @@ private:
 
                     try {
                         pqxx::work txn(db_);
-                        pqxx::result r = txn.exec_params("SELECT sender, message FROM chat_messages WHERE room_id=$1 ORDER BY created_at ASC LIMIT 50", roo > for (const auto& row : r) {
+                        pqxx::result r = txn.exec_params("SELECT sender, message FROM chat_messages WHERE room_id=$1 ORDER BY created_at ASC LIMIT 50", room);
+                        for (const auto& row : r) {
                             std::string sender = row[0].as<std::string>();
                             std::string message = row[1].as<std::string>();
                             deliver("MSG|" + room + "|" + sender + "|" + message + "\n");
@@ -114,14 +117,21 @@ private:
                     }
 
                     std::string outbound = "MSG|" + room + "|" + display_name_ + "|" + msg + "\n";
-                    for (auto& s : rooms[room]) {
-                        if (s->authenticated_)
+
+                    // 여기에서 상대방이 room에 JOIN하지 않은 경우도 강제 참여
+                    for (auto& s : sessions_) {
+                        if (s->authenticated_) {
+                            if (rooms[room].find(s) == rooms[room].end()) {
+                                rooms[room].insert(s);
+                                s->joined_rooms_.insert(room);
+                            }
                             s->deliver(outbound);
+                        }
                     }
                 }
 
                 do_read();
-                            }));
+            }));
     }
 
     void do_write() {
@@ -179,6 +189,7 @@ int main() {
     }
     return 0;
 }
+
 
 
 
